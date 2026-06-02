@@ -393,6 +393,7 @@ def _normalize_extra_vars(reco_prefixes, extra_vars):
 
 def match_reco_truth(
     files,
+    is_bkg = False,
     weights=None,
     reco_prefixes=["AntiKt4GEPCellsTowerAlgJets"],
     truth_prefix="AntiKt4TruthJets",
@@ -414,7 +415,6 @@ def match_reco_truth(
     met_mode=False,
     met_reco_ex_name="ex",
     met_reco_ey_name="ey",
-    met_special_prefixes=None,
     step_size=10000,
 ):
 
@@ -434,7 +434,6 @@ def match_reco_truth(
     extra_vars_by_prefix = _normalize_extra_vars(reco_prefixes, extra_vars)
     reco_sources = reco_sources or {}
     extra_var_branches = extra_var_branches or {}
-    special_met_prefixes = set(met_special_prefixes or [])
 
     truth_branches = [
         f"{truth_prefix}_{pt_truth_name}{truth_suffix}",
@@ -447,7 +446,6 @@ def match_reco_truth(
 
     reco_extra_branches = {}
     reco_branches = {}
-    reco_metphi_mode = {}
     for i, reco_prefix in enumerate(reco_prefixes):
         mapped_source_prefix = reco_sources.get(reco_prefix, reco_prefix)
         source_prefix = mapped_source_prefix
@@ -477,21 +475,13 @@ def match_reco_truth(
         if met_mode:
             reco_branches[reco_prefix][1] = f"{source_prefix}_{met_reco_ex_name}"
             reco_branches[reco_prefix][2] = f"{source_prefix}_{met_reco_ey_name}"
-            reco_metphi_mode[reco_prefix] = False
-            if reco_branches[reco_prefix][1] not in available_branches:
-                met_branch = f"{source_prefix}_met"
-                met_phi_branch = f"{source_prefix}_metPhi"
-                if (
-                    (reco_prefix in special_met_prefixes or source_prefix in special_met_prefixes)
-                    and met_branch in available_branches
-                    and met_phi_branch in available_branches
-                ):
-                    reco_branches[reco_prefix][0] = met_branch
-                    reco_branches[reco_prefix][1] = met_phi_branch
-                    reco_branches[reco_prefix][2] = met_phi_branch
-                    reco_metphi_mode[reco_prefix] = True
 
-    branches = truth_branches + ["weight", "gFEX_rho"]
+    branches = truth_branches 
+    if is_bkg:
+        branches = branches + ["weight", "gFEX_rho", "filterHSTP"]
+    else:
+        branches = branches + ["weight", "gFEX_rho"]
+
     for reco_prefix in reco_prefixes:
         branches.extend(reco_branches[reco_prefix])
         branches.extend(reco_extra_branches[reco_prefix].values())
@@ -514,6 +504,8 @@ def match_reco_truth(
     event_ids = []
     event_weights = []
     event_rhos = []
+    if is_bkg:
+        event_HSTPfilter = []
     reco_pts = {reco_prefix:[] for reco_prefix in reco_prefixes}
     reco_etas = {reco_prefix:[] for reco_prefix in reco_prefixes}
     reco_phis = {reco_prefix:[] for reco_prefix in reco_prefixes}
@@ -541,6 +533,8 @@ def match_reco_truth(
         event_offset = 0
         file_weights = []
         file_rhos = []
+        if is_bkg:
+            file_HSTPfilter = []
 
         for chunk in tqdm(it, total=total_chunks, desc=f"{filename}"):
             for name in pt_branches:
@@ -567,13 +561,9 @@ def match_reco_truth(
 
                 for reco_prefix in reco_prefixes:
                     reco_et = chunk[reco_branches[reco_prefix][0]]
-                    if reco_metphi_mode.get(reco_prefix, False):
-                        reco_phi = ak.values_astype(-chunk[reco_branches[reco_prefix][1]], np.float32)
-                    else:
-                        reco_ex = chunk[reco_branches[reco_prefix][1]]
-                        reco_ey = chunk[reco_branches[reco_prefix][2]]
-                        reco_et = ak.values_astype(np.sqrt(reco_ex**2 + reco_ey**2), np.float32)
-                        reco_phi = ak.values_astype(np.arctan2(reco_ey, reco_ex), np.float32)
+                    reco_ex = chunk[reco_branches[reco_prefix][1]]
+                    reco_ey = chunk[reco_branches[reco_prefix][2]]
+                    reco_phi = ak.values_astype(np.arctan2(reco_ey, reco_ex), np.float32)
 
                     reco_pts[reco_prefix].append(ak.singletons(reco_et))
                     reco_etas[reco_prefix].append(ak.singletons(truth_eta))
@@ -611,40 +601,73 @@ def match_reco_truth(
             event_ids.extend(range(event_offset, event_offset + n_events_chunk))
             file_weights.extend(chunk["weight"])
             file_rhos.extend(chunk["gFEX_rho"])
+            if is_bkg:
+                file_HSTPfilter.extend(chunk["filterHSTP"])
             event_offset += n_events_chunk
 
             del chunk
             gc.collect()
 
         total_weight = np.sum(file_weights)
-        file_weights = [f*weight/total_weight for f in file_weights]
+        #file_weights = [f*weight/total_weight for f in file_weights]
         event_weights.extend(file_weights)
         event_rhos.extend(file_rhos)
+        if is_bkg:
+            event_HSTPfilter.extend(file_HSTPfilter)
 
     for i, f in enumerate(files):
         process_file(f, weights[i])
 
-    return {
-        reco_prefix: ak.zip(
-            {
-                "event": ak.Array(event_ids),
-                "weight": ak.Array(event_weights),
-                "rho": ak.fill_none(ak.pad_none(event_rhos, 3, axis=-1, clip=True), 0., axis=-1),
-                "reco_pt": ak.concatenate(reco_pts[reco_prefix]),
-                "reco_eta": ak.concatenate(reco_etas[reco_prefix]),
-                "reco_phi": ak.concatenate(reco_phis[reco_prefix]),
-                "truth_pt": ak.concatenate(truth_pts[reco_prefix]),
-                "truth_eta": ak.concatenate(truth_etas[reco_prefix]),
-                "truth_phi": ak.concatenate(truth_phis[reco_prefix]),
-                **{
-                    f"reco_{extra_name}": ak.concatenate(reco_extras[reco_prefix][extra_name])
-                    for extra_name in extra_vars_by_prefix[reco_prefix]
+    if is_bkg:
+        bkg_pairs = {
+            reco_prefix: ak.zip(
+                {
+                    "event": ak.Array(event_ids),
+                    "weight": ak.Array(event_weights),
+                    "rho": ak.fill_none(ak.pad_none(event_rhos, 3, axis=-1, clip=True), 0., axis=-1),
+                    "filterHSTP": ak.Array(event_HSTPfilter),
+                    "reco_pt": ak.concatenate(reco_pts[reco_prefix]),
+                    "reco_eta": ak.concatenate(reco_etas[reco_prefix]),
+                    "reco_phi": ak.concatenate(reco_phis[reco_prefix]),
+                    "truth_pt": ak.concatenate(truth_pts[reco_prefix]),
+                    "truth_eta": ak.concatenate(truth_etas[reco_prefix]),
+                    "truth_phi": ak.concatenate(truth_phis[reco_prefix]),
+                    **{
+                        f"reco_{extra_name}": ak.concatenate(reco_extras[reco_prefix][extra_name])
+                        for extra_name in extra_vars_by_prefix[reco_prefix]
+                    },
                 },
-            },
-            depth_limit=1,
-        )
-        for reco_prefix in reco_prefixes
-    }
+                depth_limit=1,
+            )
+            for reco_prefix in reco_prefixes
+        }
+        result = {reco_prefix: bkg_pairs[reco_prefix][bkg_pairs[reco_prefix]["filterHSTP"]]
+            for reco_prefix in bkg_pairs}
+        return result
+    else:
+        sig_pairs =  {
+            reco_prefix: ak.zip(
+                {
+                    "event": ak.Array(event_ids),
+                    "weight": ak.Array(event_weights),
+                    "rho": ak.fill_none(ak.pad_none(event_rhos, 3, axis=-1, clip=True), 0., axis=-1),
+                    "reco_pt": ak.concatenate(reco_pts[reco_prefix]),
+                    "reco_eta": ak.concatenate(reco_etas[reco_prefix]),
+                    "reco_phi": ak.concatenate(reco_phis[reco_prefix]),
+                    "truth_pt": ak.concatenate(truth_pts[reco_prefix]),
+                    "truth_eta": ak.concatenate(truth_etas[reco_prefix]),
+                    "truth_phi": ak.concatenate(truth_phis[reco_prefix]),
+                    **{
+                        f"reco_{extra_name}": ak.concatenate(reco_extras[reco_prefix][extra_name])
+                        for extra_name in extra_vars_by_prefix[reco_prefix]
+                    },
+                },
+                depth_limit=1,
+            )
+            for reco_prefix in reco_prefixes
+        }
+        result = sig_pairs
+        return result 
 
 
 def select_kth(arr, field, sorton, k):
@@ -1341,7 +1364,7 @@ def compute_response(pairs, pt_bins, eta_bins, min_pt=None, respcorrs=None, debu
             plt.ylabel(r"Response (Reco / Truth)")
             plt.xlabel(r"Reco $p_T$ [GeV]")
             plt.title(f"Eta: {eta_bins[ie]:.1f} - {eta_bins[ie+1]:.1f}")
-            plt.legend()
+            #plt.legend()
             
             # Ensure plotdir exists or handle path
             plot_name = build_debug_plot_path(debug, 'debug_%s_reco_eta_%.1f_%.1f.pdf'%(debug,eta_bins[ie],eta_bins[ie+1]))
@@ -1711,6 +1734,7 @@ def load_corrs(filename):
 def process_run(config: RunConfig, debug=True, prefix="", corr_cache=""):
     sig_pairs = match_reco_truth(
         files=config.signal_files,
+        is_bkg = False,
         weights=[1.]*len(config.signal_files),
         reco_prefixes=config.reco_prefixes,
         truth_prefix=config.truth_prefix,
@@ -1730,6 +1754,7 @@ def process_run(config: RunConfig, debug=True, prefix="", corr_cache=""):
 
     bkg_pairs = match_reco_truth(
         files=config.background_files,
+        is_bkg = True,
         weights=config.background_weights,
         reco_prefixes=config.reco_prefixes,
         truth_prefix=config.truth_prefix,
@@ -1759,7 +1784,9 @@ def process_run(config: RunConfig, debug=True, prefix="", corr_cache=""):
     
         
     for n in range(len(config.nobjs)):
-        if debug: 
+        if debug:
+            no_corr_pt_bkg = {}
+            no_corr_pt_sig = {} 
             for var in ["reco_pt","reco_eta","truth_pt","truth_eta"]:
                 figb, axb = plt.subplots()
                 figs, axs = plt.subplots()
@@ -1772,9 +1799,13 @@ def process_run(config: RunConfig, debug=True, prefix="", corr_cache=""):
                     else:
                         bins = config.truth_eta_bins
                     bkgv = select_kth(bkg_pairs[reco_prefix], var, "reco_pt" if "reco" in var else "truth_pt", config.nobjs[n])
+                    if "reco" in var and 'pt' in var:
+                        no_corr_pt_bkg[reco_prefix] = bkgv
                     bkgw = bkg_pairs[reco_prefix]["weight"]
                     axb.hist(bkgv,bins=bins,histtype='step',label='Truth' if 'truth' in var else reco_prefix,weights=bkgw)
                     sigv = select_kth(sig_pairs[reco_prefix], var, "reco_pt" if "reco" in var else "truth_pt", config.nobjs[n])
+                    if "reco" in var and 'pt' in var:
+                        no_corr_pt_sig[reco_prefix] = sigv
                     axs.hist(sigv,bins=bins,histtype='step',label='Truth' if 'truth' in var else reco_prefix)
                     ax.hist(bkgv,bins=bins,histtype='step',label='bkg : '+('Truth' if 'truth' in var else reco_prefix),weights=bkgw,density=True)
                     ax.hist(sigv,bins=bins,histtype='step',label='sig : '+('Truth' if 'truth' in var else reco_prefix),density=True)
@@ -2074,7 +2105,7 @@ def process_run(config: RunConfig, debug=True, prefix="", corr_cache=""):
                 plt.close(figb)
                 plt.close(figs)
                 plt.close(fig)
-            
+                
             if n==0:
                 for var in ["num_truth","num_reco"]:
                     figb, axb = plt.subplots()
@@ -2100,7 +2131,41 @@ def process_run(config: RunConfig, debug=True, prefix="", corr_cache=""):
                     plt.close(figb)
                     plt.close(figs)
                     plt.close(fig)
+                
+        if debug:
+            for r,reco_prefix in enumerate(config.reco_prefixes):
+                figb, axb = plt.subplots()
+                figs, axs = plt.subplots()
+                bins = config.truth_pt_bins
 
+                bkg_reco = select_kth(bkg_pairs[reco_prefix], "reco_pt", "reco_pt", config.nobjs[n])
+                bkg_reco_nocorr = no_corr_pt_bkg[reco_prefix]
+                bkg_truth = select_kth(bkg_pairs[reco_prefix], "truth_pt", "truth_pt", config.nobjs[n])
+                bkgw = bkg_pairs[reco_prefix]["weight"]
+
+                sig_reco = select_kth(sig_pairs[reco_prefix], "reco_pt", "reco_pt", config.nobjs[n])
+                sig_reco_nocorr = no_corr_pt_sig[reco_prefix]
+                sig_truth = select_kth(sig_pairs[reco_prefix], "truth_pt", "truth_pt", config.nobjs[n])
+
+                axb.hist(bkg_reco,bins=bins,histtype='step',label='After calibration',color='tab:blue',weights=bkgw,density=True)
+                axb.hist(bkg_reco_nocorr,bins=bins,histtype='step',label='Before calibration',weights=bkgw,color='tab:cyan',density=True)
+                axb.hist(bkg_truth,bins=bins,histtype='step',label='Truth',weights=bkgw,color='tab:green',density=True)
+
+                axs.hist(sig_reco,bins=bins,histtype='step',label='After calibration',color='tab:orange',density=True)
+                axs.hist(sig_reco_nocorr,bins=bins,histtype='step',label='Before calibration',color='tab:brown',density=True)
+                axs.hist(sig_truth,bins=bins,histtype='step',label='Truth',color='tab:red',density=True)
+                axb.legend(bbox_to_anchor=(1.05, 1))
+                axs.legend(bbox_to_anchor=(1.05, 1))
+
+                axb.set_yscale('log')
+                axb.set_title('%s - Background'%(reco_prefix))
+                axs.set_yscale('log')
+                axs.set_title('%s - Signal'%(reco_prefix))
+
+                figb.savefig(build_debug_plot_path(config.name, 'debug_bkg_%s%s_%s_%i.pdf'%(prefix,reco_prefix,config.name,config.nobjs[n])), bbox_inches='tight')
+                figs.savefig(build_debug_plot_path(config.name, 'debug_sig_%s%s_%s_%i.pdf'%(prefix,reco_prefix,config.name,config.nobjs[n])), bbox_inches='tight')
+                plt.close(figb)
+                plt.close(figs)
     
     return results
 
