@@ -1,0 +1,152 @@
+name: Jet
+signal_files:
+- /eos/user/a/anarita/PPES_samples_mu200/VBFhh4b.root
+
+background_files:
+- /eos/user/a/anarita/PPES_samples_mu200/JZ1_mu200.root
+- /eos/user/a/anarita/PPES_samples_mu200/JZ2_mu200.root
+- /eos/user/a/anarita/PPES_samples_mu200/JZ3_mu200.root
+- /eos/user/a/anarita/PPES_samples_mu200/JZ4_mu200.root
+- /eos/user/a/anarita/PPES_samples_mu200/JZ5_mu200.root
+
+background_weights:
+- 1.0
+- 1.0
+- 1.0
+- 1.0
+- 1.0
+
+reco_prefixes:
+- WTAConeGEPCellsTowerJets
+- L1_gFexLRJetRoI
+truth_prefix: AntiKt10TruthJets
+truth_suffix: ''
+match_dict:
+  pt_reco_names:
+  - pt
+  - et
+reco_pt_min: 25.0
+truth_pt_min: 50.0
+pt_min: 25.0
+reco_iso_dr: 2
+truth_iso_dr: 2
+nobjs:
+- 1
+#- 2
+#- 3
+#- 4
+selectors:
+- name: null_selector
+  label: ''
+
+truth_pt_bins:
+- 50.0
+- 60.0
+- 70.0
+- 80.0
+- 90.0
+- 100.0
+- 110.0
+- 120.0
+- 130.0
+- 140.0
+- 150.0
+- 160.0
+- 170.0
+- 180.0
+- 190.0
+- 200.0
+- 210.0
+- 220.0
+- 230.0
+- 240.0
+- 250.0
+- 260.0
+- 270.0
+- 280.0
+- 290.0
+- 300.0
+- 310.0
+- 320.0
+- 330.0
+- 340.0
+- 350.0
+- 360.0
+- 370.0
+- 380.0
+- 390.0
+- 400.0
+- 410.0
+- 420.0
+- 430.0
+- 440.0
+- 450.0
+- 460.0
+- 470.0
+- 480.0
+- 490.0
+- 500.0
+- 510.0
+- 520.0
+- 530.0
+- 540.0
+- 550.0
+- 560.0
+- 570.0
+- 580.0
+- 590.0
+- 600.0
+- 610.0
+- 620.0
+- 630.0
+- 640.0
+- 650.0
+#- 660.0
+#- 670.0
+#- 680.0
+#- 690.0
+#- 700.0
+#- 710.0
+#- 720.0
+#- 730.0
+#- 740.0
+#- 750.0
+#- 760.0
+#- 770.0
+#- 780.0
+#- 790.0
+#- 800.0
+
+truth_eta_bins:
+#- -4.9
+#- -3.2 
+- -2.5
+- -2.0
+- -1.7
+- -1.5
+- -1.35
+- -1.0
+#- -0.5
+- 0.0
+#- 0.5
+- 1.0
+- 1.35
+- 1.5
+- 1.7
+- 2.0
+- 2.5
+#- 3.2
+#- 4.9
+
+do_rho_sub: false
+rates:
+- 35.0
+#- 100.0
+
+triggers:
+- - 100.0
+#- - 100.0
+
+extra_vars: []
+tree: ntuple
+dr_max: 0.5
